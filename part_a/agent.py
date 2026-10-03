@@ -1,10 +1,8 @@
 from collections import deque,defaultdict
 import time
-import heapq
 class Agent:
 
     def __init__(self, layout_file, prob_file):
-
         self.grid={}
         self.actions= [(1, 0), (-1, 0), (0, -1), (0, 1)]
 
@@ -16,13 +14,13 @@ class Agent:
         pirate1=None
         pirate2=None
 
-        for i in range (self.N):
-            row=lines[i]
+        for li in range (self.N):
+            row=lines[li]
+            i = li
             for j in range(len(row)):
                 char=row[j]
-                grid_i= self.N-1-i
+                loc=(i,j)
 
-                loc=(grid_i,j)
                 self.grid[loc]=char
                 if char=="1":
                     pirate1=loc
@@ -63,41 +61,29 @@ class Agent:
         self.V=defaultdict(float)
 
     def get_action(self, ship_location, pirate_locations, treasure_locations) -> int:
-        """
-        Choose an action for the current state.
+        ship = tuple(ship_location)
+        tr = tuple(sorted([tuple(t) for t in treasure_locations]))
+        
+        # Pad the incoming pirates list so it always has exactly 2 elements
+        p_locs = [tuple(p) if p else None for p in pirate_locations]
+        while len(p_locs) < 2:
+            p_locs.append(None)
+            
+        # Check all possible ways env.py might be handing us the pirates
+        possible_states = [
+            (ship, p_locs[0], p_locs[1], tr),  # Direct order
+            (ship, p_locs[1], p_locs[0], tr),  # Swapped pirates
+            (ship, None, p_locs[0], tr),       # Only P2 alive, passed at index 0
+            (ship, p_locs[0], None, tr)        # Only P1 alive, passed at index 1
+        ]
+        
+        for s in possible_states:
+            if s in self.policy:
+                return self.policy[s]
 
-        Args:
-            ship_location: Tuple (x, y) representing the current
-                location of the ship.
-
-            pirate_locations: List containing the locations of all
-                pirates. There can be at most 2 pirates.
-
-            treasure_locations: List containing the locations of all
-                treasures. There can be at most 2 treasures.
-
-        Returns:
-            An integer representing the selected action:
-
-                0 -> UP
-                1 -> DOWN
-                2 -> LEFT
-                3 -> RIGHT
-
-        Note:
-            This function may be called multiple times after
-            `learn_policy()` has been executed.
-        """
-
-       
-        p1=tuple(pirate_locations[0]) if len(pirate_locations)>0 else None
-        p2=tuple(pirate_locations[1]) if len(pirate_locations)>1 else None
-        state=(ship_location,p1,p2,tuple(sorted(treasure_locations)))
-
-        if state in self.policy:
-            return(self.policy[state])
-        else:
-            return 0
+        # If it still fails, the state was never reached during Value Iteration
+        print(f"STATE MISMATCH! Ship: {ship_location}, Pirates: {pirate_locations}")
+        return 0
 
     def learn_policy(self, time_limit):
         """
@@ -124,7 +110,8 @@ class Agent:
         self.find_policy()
 
     def value_iteration_setup(self):
-        self.predecessors =defaultdict(set)
+
+        self.state_list= []
         self.T_cache = defaultdict(list)
         self.states =set([self.start_state])
         q =deque([self.start_state])
@@ -134,6 +121,7 @@ class Agent:
                 print(f"Setup timeout! Processed {states_processed} states.")
                 break
             state=q.popleft()
+            self.state_list.append(state)
             states_processed+=1
             if states_processed % 1000 == 0:
                 print(f"Discovered {states_processed} states...")
@@ -142,7 +130,6 @@ class Agent:
                 self.T_cache[(state,action)]=transitions
 
                 for next_state, prob, reward, is_term in transitions:
-                    self.predecessors[next_state].add(state)
                     if next_state not in self.states:
                         self.states.add(next_state)
                         if not is_term:
@@ -151,64 +138,36 @@ class Agent:
 
     def value_iteration(self) :
         epsilon=1e-3
-        pq=[]
-        for state in self.states:
-            best_action=float('-inf')
-            for action in range(0,4):
-                q_value=0
-                for next_state, prob, reward, term in self.T_cache[(state,action)]:
-                    if term:
+
+        while True:
+            max_change=0.0
+        
+            for state in self.states:
+                best_action=float('-inf')
+                for action in range(0,4):
+                    q_value=0
+                    for next_state, prob, reward, term in self.T_cache[(state,action)]:
+                     if term:
                         #valuation of terminal state is zero
                         q_value=q_value+prob*reward
-                    else:
+                     else:
                         q_value= q_value+ prob*(reward+ self.gamma*self.V[next_state])
-                if q_value> best_action:
-                    best_action=q_value
+                    if q_value> best_action:
+                        best_action=q_value
 
-            change= abs(best_action-self.V[state])
-            if change>epsilon:
-                heapq.heappush(pq,(-change,state))
+                change= abs(best_action-self.V[state])
+                if change>max_change:
+                     max_change=change
+                self.V[state] = best_action
 
-        while len(pq)!=0:
-            if time.time() - self.start_time >= self.time_limit - 1.5:
-                break
+            if max_change<epsilon:
+                 break
+                
 
-            change, state=heapq.heappop(pq)
-
-            best_action=float('-inf')
-            for action in range(0,4):
-                q_value=0
-                for next_state, prob, reward, term in self.T_cache[(state,action)]:
-                                if term:
-                                    #valuation of terminal state is zero
-                                    q_value=q_value+prob*reward
-                                else:
-                                    q_value= q_value+ prob*(reward+ self.gamma*self.V[next_state])
-                if q_value> best_action:
-                                best_action=q_value
-
-            self.V[state]=best_action
-
-            for previous_state in self.predecessors[state]:
-                p_best_action=float('-inf')
-                for action in range(0,4):
-                                 q_value=0
-                                 for next_state, prob, reward, term in self.T_cache[(previous_state,action)]:
-                                                 if term:
-                                                     #valuation of terminal state is zero
-                                                     q_value=q_value+prob*reward
-                                                 else:
-                                                     q_value= q_value+ prob*(reward+ self.gamma*self.V[next_state])
-                                 if q_value> p_best_action:
-                                                 p_best_action=q_value
-
-                p_change=abs(p_best_action-self.V[previous_state])
-                if p_change>epsilon:
-                     heapq.heappush(pq,(-p_change,previous_state))
-
+        
 
     def find_policy(self):
-         for state in self.states:
+         for state in self.state_list:
             pol_act=0
             best_action=float('-inf')
             for action in range(0,4):
@@ -275,7 +234,8 @@ class Agent:
         p1_states=self.state_changes(p1,1,action)
         p2_states=self.state_changes(p2,2,action)
 
-        transitions=[]
+        trans_dict = {}
+
         for ship_location, prob_s in ship_states:
               for p1_loc, prob_p1 in p1_states:
                     for p2_loc,prob_p2 in p2_states:
@@ -302,8 +262,11 @@ class Agent:
                                                 tr.remove(ship_location)
                         
                         next_state=(ship_location,p1_loc,p2_loc,tuple(tr))
-                        transitions.append((next_state,prob,reward,term))
-        return transitions
+
+                        if next_state not in trans_dict:
+                            trans_dict[next_state] = [0.0, reward, term]
+                        trans_dict[next_state][0] += prob
+        return [(nxt, vals[0], vals[1], vals[2]) for nxt, vals in trans_dict.items()]
 
 
 
