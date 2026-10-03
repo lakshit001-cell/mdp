@@ -6,30 +6,34 @@ class Agent:
     def __init__(self, layout_file, prob_file):
 
         self.grid={}
-        self.actions = [(0, 1), (0, -1), (-1, 0), (1, 0)]
+        self.actions= [(1, 0), (-1, 0), (0, -1), (0, 1)]
 
         with open(layout_file, 'r') as f:
             lines = f.read().splitlines()
 
         self.N=len(lines)
         treasures=[]
+        pirate1=None
+        pirate2=None
 
         for i in range (self.N):
             row=lines[i]
             for j in range(len(row)):
                 char=row[j]
                 grid_i= self.N-1-i
-                self.grid[(j,grid_i)]=char
+
+                loc=(grid_i,j)
+                self.grid[loc]=char
                 if char=="1":
-                    pirate1=(j,grid_i)
+                    pirate1=loc
                 elif char=="2":
-                    pirate2=(j,grid_i)
+                    pirate2=loc
                 elif char=="S":
-                    ship_start=(j,grid_i)
+                    ship_start=loc
                 elif char=="T":
-                    treasures.append=(j,grid_i)
+                    treasures.append(loc)
                 elif char=="F":
-                    self.fort=(j,grid_i)
+                    self.fort=loc
 
         treasures.sort()
         self.start_state= (ship_start,pirate1,pirate2,tuple(treasures))
@@ -84,6 +88,8 @@ class Agent:
             This function may be called multiple times after
             `learn_policy()` has been executed.
         """
+
+       
         p1=tuple(pirate_locations[0]) if len(pirate_locations)>0 else None
         p2=tuple(pirate_locations[1]) if len(pirate_locations)>1 else None
         state=(ship_location,p1,p2,tuple(sorted(treasure_locations)))
@@ -93,7 +99,7 @@ class Agent:
         else:
             return 0
 
-    def learn_policy(self, time):
+    def learn_policy(self, time_limit):
         """
         Learn a policy for navigating the Treasure Hunt environment.
 
@@ -108,23 +114,31 @@ class Agent:
         """
 
         self.start_time=time.time()
-        self.time_limit=self.time_limit
+        self.time_limit=time_limit
         
-        
+        print("--- PHASE 1: State Discovery ---")
         self.value_iteration_setup()
+        print(f"--- PHASE 2: Value Iteration (Total States: {len(self.states)}) ---")
         self.value_iteration()
+        print("--- PHASE 3: Policy Extraction ---")
         self.find_policy()
 
     def value_iteration_setup(self):
         self.predecessors =defaultdict(set)
         self.T_cache = defaultdict(list)
         self.states =set([self.start_state])
-        q =deque([self.initial_state])
-
+        q =deque([self.start_state])
+        states_processed=0
         while q:
+            if time.time() - self.start_time >= self.time_limit - 5.0:
+                print(f"Setup timeout! Processed {states_processed} states.")
+                break
             state=q.popleft()
+            states_processed+=1
+            if states_processed % 1000 == 0:
+                print(f"Discovered {states_processed} states...")
             for action in range(0,4):
-                transitions=self._compute_transition(state,action)
+                transitions=self.compute_transitions(state,action)
                 self.T_cache[(state,action)]=transitions
 
                 for next_state, prob, reward, is_term in transitions:
@@ -179,7 +193,7 @@ class Agent:
                 p_best_action=float('-inf')
                 for action in range(0,4):
                                  q_value=0
-                                 for next_state, prob, reward, term in self.T_cache[(state,action)]:
+                                 for next_state, prob, reward, term in self.T_cache[(previous_state,action)]:
                                                  if term:
                                                      #valuation of terminal state is zero
                                                      q_value=q_value+prob*reward
@@ -211,6 +225,89 @@ class Agent:
             self.policy[state]=pol_act
 
 
+
+    def state_changes(self,location, id, action):
+        if location is None:
+            return[(None,1)] 
+
+        outcomes = defaultdict(float)
+
+        for act in range(0,4):
+            dx,dy=self.actions[act]
+            if id==0:
+                if act==action:
+                    prob=self.ps
+                else:
+                    prob= (1.0-self.ps)/3.0
+            else:
+                  prob=self.p_probs[id][act]
+
+            if prob==0.0:
+                  continue
+
+            new_x=location[0]+dx
+            new_y=location[1]+dy
+            is_valid=True
+            if (new_x,new_y) not in self.grid:
+                  is_valid=False
+            else:
+                char=self.grid[(new_x,new_y)]
+                if char=='L':
+                      is_valid=False
+                elif id==1 and char not in ('1','!'):
+                    is_valid=False
+                elif id==2 and char not in ('2','!'):
+                                    is_valid=False
+            if is_valid==True:
+                  outcomes[(new_x,new_y)]+= prob
+            else:
+                  outcomes[location]+=prob
+        result=[]
+        for i,j in outcomes.items():
+            result.append((i,j))
+        return result
+
+          
     def compute_transitions(self,state,action):
-                
-         
+        ship,p1,p2,treasure=state
+
+        ship_states=self.state_changes(ship,0,action)
+        p1_states=self.state_changes(p1,1,action)
+        p2_states=self.state_changes(p2,2,action)
+
+        transitions=[]
+        for ship_location, prob_s in ship_states:
+              for p1_loc, prob_p1 in p1_states:
+                    for p2_loc,prob_p2 in p2_states:
+
+                        prob=prob_s*prob_p1*prob_p2
+                        if prob==0.0:
+                                continue
+                        reward=self.Rs
+                        term=False
+
+                        if ship_location==p1_loc or ship_location==p2_loc:
+                              term=True
+                              reward+=self.Rp
+                        elif ship_location==self.fort:
+                              term=True
+                              reward+=self.Rf
+
+                        tr=list(treasure)
+                        if term==False:
+                              
+                                    
+                            if ship_location in tr:
+                                                reward+=self.Rt
+                                                tr.remove(ship_location)
+                        
+                        next_state=(ship_location,p1_loc,p2_loc,tuple(tr))
+                        transitions.append((next_state,prob,reward,term))
+        return transitions
+
+
+
+
+                          
+            
+        
