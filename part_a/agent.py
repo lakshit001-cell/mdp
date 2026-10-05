@@ -104,7 +104,7 @@ class Agent:
         
         self.value_iteration()
         
-        print("learning complete")
+
 
     def value_iteration_setup(self):
 
