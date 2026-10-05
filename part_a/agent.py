@@ -9,12 +9,12 @@ class Agent:
         with open(layout_file, 'r') as f:
             lines = f.read().splitlines()
 
-        self.N=len(lines)
+        self.Number=len(lines)
         treasures=[]
         pirate1=None
         pirate2=None
 
-        for li in range (self.N):
+        for li in range (self.Number):
             row=lines[li]
             i = li
             for j in range(len(row)):
@@ -56,34 +56,31 @@ class Agent:
         self.Rf=float(rewards[2])
         self.Rp=float(rewards[3])
         self.gamma=float(lines[4])
-
         self.policy={}
-        self.V=defaultdict(float)
+        self.Valuation=defaultdict(float)
 
+        max_abs_reward = max(abs(self.Rs), abs(self.Rt), abs(self.Rf), abs(self.Rp), 1e-4)
+        if 0.0 < self.gamma < 1.0:
+             self.epsilon= min(1e-3, max_abs_reward * ((1.0 - self.gamma) / self.gamma) * 0.05)
+        else:
+             self.epsilon=1e-3
+        self.epsilon=max(self.epsilon,1e-6)
+             
+
+             
     def get_action(self, ship_location, pirate_locations, treasure_locations) -> int:
-        ship = tuple(ship_location)
-        tr = tuple(sorted([tuple(t) for t in treasure_locations]))
+        ship =tuple(ship_location)
+        tr =tuple(sorted([tuple(t) for t in treasure_locations]))
         
-        # Pad the incoming pirates list so it always has exactly 2 elements
-        p_locs = [tuple(p) if p else None for p in pirate_locations]
-        while len(p_locs) < 2:
-            p_locs.append(None)
+        
+        p1 = tuple(pirate_locations[0])
+        p2 = tuple(pirate_locations[1])
             
-        # Check all possible ways env.py might be handing us the pirates
-        possible_states = [
-            (ship, p_locs[0], p_locs[1], tr),  # Direct order
-            (ship, p_locs[1], p_locs[0], tr),  # Swapped pirates
-            (ship, None, p_locs[0], tr),       # Only P2 alive, passed at index 0
-            (ship, p_locs[0], None, tr)        # Only P1 alive, passed at index 1
-        ]
         
-        for s in possible_states:
-            if s in self.policy:
-                return self.policy[s]
+        state = (ship, p1, p2, tr)
+        return self.policy.get(state, 0) 
 
-        # If it still fails, the state was never reached during Value Iteration
-        print(f"STATE MISMATCH! Ship: {ship_location}, Pirates: {pirate_locations}")
-        return 0
+    
 
     def learn_policy(self, time_limit):
         """
@@ -102,32 +99,29 @@ class Agent:
         self.start_time=time.time()
         self.time_limit=time_limit
         
-        print("--- PHASE 1: State Discovery ---")
+       
         self.value_iteration_setup()
-        print(f"--- PHASE 2: Value Iteration (Total States: {len(self.states)}) ---")
+        
         self.value_iteration()
-        print("--- PHASE 3: Policy Extraction ---")
-        self.find_policy()
+        
+        print("learning complete")
 
     def value_iteration_setup(self):
 
         self.state_list= []
-        self.T_cache = defaultdict(list)
+        self.Transitions_list = defaultdict(list)
         self.states =set([self.start_state])
         q =deque([self.start_state])
         states_processed=0
         while q:
-            if time.time() - self.start_time >= self.time_limit - 5.0:
-                print(f"Setup timeout! Processed {states_processed} states.")
+            if time.time() - self.start_time >= self.time_limit * 0.60:
                 break
             state=q.popleft()
             self.state_list.append(state)
             states_processed+=1
-            if states_processed % 1000 == 0:
-                print(f"Discovered {states_processed} states...")
             for action in range(0,4):
                 transitions=self.compute_transitions(state,action)
-                self.T_cache[(state,action)]=transitions
+                self.Transitions_list[(state,action)]=transitions
 
                 for next_state, prob, reward, is_term in transitions:
                     if next_state not in self.states:
@@ -140,33 +134,40 @@ class Agent:
         epsilon=1e-3
 
         while True:
+            if time.time() - self.start_time >= self.time_limit * 0.95:
+                break
             max_change=0.0
         
-            for state in self.states:
-                best_action=float('-inf')
+            for state in self.state_list:
+                best_action = float('-inf')
+                best_action_id=0
+                
                 for action in range(0,4):
                     q_value=0
-                    for next_state, prob, reward, term in self.T_cache[(state,action)]:
+                    for next_state, prob, reward, term in self.Transitions_list[(state,action)]:
                      if term:
                         #valuation of terminal state is zero
                         q_value=q_value+prob*reward
                      else:
-                        q_value= q_value+ prob*(reward+ self.gamma*self.V[next_state])
+                        q_value= q_value+ prob*(reward+ self.gamma*self.Valuation[next_state])
                     if q_value> best_action:
                         best_action=q_value
+                        best_action_id=action
 
-                change= abs(best_action-self.V[state])
+                change= abs(best_action-self.Valuation[state])
                 if change>max_change:
                      max_change=change
-                self.V[state] = best_action
+                self.Valuation[state] = best_action
+                self.policy[state] = best_action_id
 
-            if max_change<epsilon:
+            if max_change<self.epsilon:
                  break
                 
 
         
 
     def find_policy(self):
+         '''
          for state in self.state_list:
             pol_act=0
             best_action=float('-inf')
@@ -181,7 +182,8 @@ class Agent:
                               if q_value> best_action:
                                               best_action=q_value
                                               pol_act=action
-            self.policy[state]=pol_act
+            self.policy[state]=pol_act'''
+         pass
 
 
 
