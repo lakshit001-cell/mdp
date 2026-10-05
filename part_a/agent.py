@@ -157,8 +157,8 @@ class Agent:
                 change= abs(best_action-self.Valuation[state])
                 if change>max_change:
                      max_change=change
-                self.Valuation[state] = best_action
-                self.policy[state] = best_action_id
+                self.Valuation[state] =best_action
+                self.policy[state]= best_action_id
 
             if max_change<self.epsilon:
                  break
